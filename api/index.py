@@ -11,18 +11,28 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
-# --- [修正：最新の接続形式] ---
+# --- [修正：URLからトークンを分離して接続] ---
 def get_redis_conn():
     if Redis is None:
         return None, "Library not installed"
     
-    url = os.environ.get("REDIS_URL")
-    if not url:
+    raw_url = os.environ.get("REDIS_URL")
+    if not raw_url:
         return None, "REDIS_URL is missing"
     
     try:
-        # 修正：from_urlではなく直接urlを指定して作成
-        r = Redis(url=url)
+        # URLが 'https://:TOKEN@HOST' の形式なので、分解して繋ぐ
+        # ※ Upstash Redisライブラリの仕様に合わせる
+        if "@" in raw_url:
+            # トークンとURLを分ける
+            parts = raw_url.replace("https://", "").split("@")
+            token = parts[0].replace(":", "")
+            url = "https://" + parts[1]
+            r = Redis(url=url, token=token)
+        else:
+            # そのままいける場合
+            r = Redis.from_env()
+            
         r.ping()
         return r, "Connected"
     except Exception as e:
@@ -40,14 +50,13 @@ def register():
         }), 200
         
     if status_msg != "Connected":
-        return jsonify({"error": "Database not ready"}), 500
+        return jsonify({"error": "Database not ready", "detail": status_msg}), 500
 
     data = request.json
     if not data: return jsonify({"error": "No data"}), 400
     
     username = data.get('username', 'test_user')
     try:
-        # テスト保存
         redis.set(f"test:{username}", "success")
         return jsonify({"message": "OK", "status": "Data saved!"})
     except Exception as e:
