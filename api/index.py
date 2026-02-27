@@ -2,11 +2,18 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json, random, uuid
 import os
+from upstash_redis import Redis
 
-# KV接続をエラーが出ないように慎重に行う
+app = Flask(__name__)
+CORS(app)
+
+# --- Vercelの「STORAGE_」設定に合わせてデータベースに接続 ---
 try:
-    from upstash_redis import Redis
-    redis = Redis.from_env()
+    # STORAGE_URL という名前で環境変数が作られている場合に対応
+    redis = Redis(
+        url=os.environ.get("STORAGE_URL"), 
+        token=os.environ.get("STORAGE_REST_API_TOKEN")
+    )
     # 接続テスト
     redis.ping()
     kv_ready = True
@@ -14,33 +21,28 @@ except Exception as e:
     print(f"KV Connection Error: {e}")
     kv_ready = False
 
-app = Flask(__name__)
-CORS(app)
-
 ADMIN_PASS = "daiki1225"
 SUSPICIOUS_LIMIT = 5
 
 @app.route('/api/auth/register', methods=['POST', 'GET'])
 def register():
-    # データベースが死んでてもここは動くはず
+    # 動作確認用
     if request.method == 'GET':
-        status = "Connected" if kv_ready else "KV Error (Check Vercel Storage tab)"
+        status = "Connected" if kv_ready else "KV Error (Check Environment Variables)"
         return jsonify({
             "message": "Server is Online!",
             "database": status,
-            "note": "If KV Error, please connect Vercel KV in Storage tab."
+            "config": "Storage Mode"
         }), 200
-    
-    # POST処理 (KVが死んでたらエラーを返す)
+        
     if not kv_ready:
-        return jsonify({"error": "Database is not ready"}), 500
+        return jsonify({"error": "Database is not connected"}), 500
 
     data = request.json
     username, password = data.get('username'), data.get('password')
     ip = request.remote_addr
     is_admin = (password == ADMIN_PASS)
     
-    # Redis操作
     try:
         if not is_admin and redis.exists(f"ip_registered:{ip}"):
             return jsonify({"error": "IP制限中"}), 403
@@ -54,4 +56,4 @@ def register():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Vercel用に app を公開
+# (マッチングやゲームロジックが必要になったら、また後で追加するぜ！)
