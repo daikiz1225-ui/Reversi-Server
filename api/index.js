@@ -1,20 +1,20 @@
 const { Redis } = require('@upstash/redis');
 
-// --- [db.py の移植] データベース接続設定 ---
+// --- [db.py 移植] 接続設定 ---
 const redis = new Redis({
   url: process.env.REDIS_URL.includes('https') ? process.env.REDIS_URL : `https://${process.env.REDIS_URL.split('@')[1]}`,
   token: process.env.REDIS_URL.split('@')[0].replace('https://:', '').replace(':', ''),
 });
 
-// --- [game_logic.py の完全移植] ---
+// --- [game_logic.py 移植] ロジック ---
 const gameLogic = {
-    // 置ける場所をリストで返す
+    // 置ける場所をリストで返す [(r, c), ...]
     getValidMoves(board, color) {
         let moves = [];
         for (let r = 0; r < 8; r++) {
             for (let c = 0; c < 8; c++) {
                 if (this.canPlace(board, r, c, color)) {
-                    moves.append([r, c]);
+                    moves.push([r, c]);
                 }
             }
         }
@@ -26,8 +26,7 @@ const gameLogic = {
         if (board[r][c] !== 0) return false;
         const opponent = 3 - color;
         const directions = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
-        for (let i = 0; i < directions.length; i++) {
-            const [dr, dc] = directions[i];
+        for (let [dr, dc] of directions) {
             if (this.hasFlippable(board, r, c, dr, dc, color, opponent)) {
                 return true;
             }
@@ -58,7 +57,7 @@ const gameLogic = {
         const opponent = 3 - color;
         const directions = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
         
-        directions.forEach(([dr, dc]) => {
+        for (let [dr, dc] of directions) {
             if (this.hasFlippable(newBoard, r, c, dr, dc, color, opponent)) {
                 let currR = r + dr;
                 let currC = c + dc;
@@ -68,7 +67,7 @@ const gameLogic = {
                     currC += dc;
                 }
             }
-        });
+        }
         return newBoard;
     }
 };
@@ -82,25 +81,24 @@ export default async function handler(req, res) {
 
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const url = req.url || "";
+    const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
     try {
-        // データベース接続テスト (GET /api)
-        // だいき、ここが Connected を出すための心臓部だ！
+        // 1. 接続確認 (GET /api)
         if (req.method === 'GET') {
             const pong = await redis.ping();
             return res.status(200).json({
                 message: "Server is Online!",
                 database: pong === "PONG" ? "Connected" : "Error",
-                status: "Ready for Reversi"
+                status: "Ready"
             });
         }
 
-        // ユーザー登録・BANチェック (POST /api/auth/register)
-        if (url.includes('register') && req.method === 'POST') {
+        // 2. ユーザー登録・BANチェック (POST /api/auth/register)
+        if (pathname.includes('register') && req.method === 'POST') {
             const { username, password } = req.body;
             
-            // BANリストに入っていないか (is_banned 移植)
+            // BANチェック (is_banned 移植)
             const isBanned = await redis.sismember("ban_list", username);
             if (isBanned) return res.status(403).json({ error: "あなたはBANされています" });
 
@@ -117,30 +115,32 @@ export default async function handler(req, res) {
             return res.status(200).json({ message: "OK" });
         }
 
-        // 不正通報 (POST /api/report)
-        if (url.includes('report') && req.method === 'POST') {
+        // 3. 不正通報システム (POST /api/report)
+        if (pathname.includes('report') && req.method === 'POST') {
             const { username } = req.body;
             const count = await redis.hincrby(`user:${username}`, "suspicious_count", 1);
             if (count >= 5) {
                 await redis.sadd("ban_list", username);
-                return res.status(200).json({ status: "BANNED" });
+                return res.status(200).json({ status: "BANNED", message: "5回目の通報によりBANされました" });
             }
             return res.status(200).json({ status: "WARNED", count });
         }
 
-        // 駒を置く (POST /api/game/move)
-        if (url.includes('move') && req.method === 'POST') {
-            const { board, r, c, color, username } = req.body;
+        // 4. 駒打ち (POST /api/game/move)
+        if (pathname.includes('move') && req.method === 'POST') {
+            const { board, r, c, color } = req.body;
+            // 置けるか判定 (can_place 移植)
             if (!gameLogic.canPlace(board, r, c, color)) {
                 return res.status(400).json({ error: "そこには置けません" });
             }
+            // 盤面更新 (execute_move 移植)
             const nextBoard = gameLogic.executeMove(board, r, c, color);
             return res.status(200).json({ board: nextBoard });
         }
 
-        return res.status(404).json({ error: "Not Found", path: url });
+        return res.status(404).json({ error: "Not Found", path: pathname });
 
     } catch (e) {
-        return res.status(500).json({ error: e.message });
+        return res.status(500).json({ error: "Server Error", message: e.message });
     }
 }
