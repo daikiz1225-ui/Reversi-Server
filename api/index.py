@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json, random, uuid
 
-# ドット(.)を消して、直接名前でインポートするように修正！
+# ドットを消したぞ！これで動くはずだ。
 from db import redis, get_user, save_user, is_banned, add_to_ban_list
 from game_logic import get_valid_moves, execute_move
 
@@ -12,12 +12,11 @@ CORS(app)
 ADMIN_PASS = "daiki1225"
 SUSPICIOUS_LIMIT = 5
 
-# --- 認証・管理系 ---
-@app.route('/api/auth/register', methods=['POST'])
+@app.route('/api/auth/register', methods=['POST', 'GET'])
 def register():
-    # ブラウザで直接開くとGETになるので、POST以外を弾く
-    if request.method != 'POST':
-        return jsonify({"error": "POST request required"}), 405
+    # ブラウザで開いた時（GET）にエラーを避けるためのメッセージ
+    if request.method == 'GET':
+        return jsonify({"message": "Server is running! Please use POST for registration."}), 200
         
     data = request.json
     if not data: return jsonify({"error": "No data"}), 400
@@ -49,7 +48,4 @@ def report():
         return jsonify({"status": "banned"}), 403
     return jsonify({"status": "warned", "count": int(new_count)})
 
-# (マッチングやゲームプレイの関数はそのまま...)
-
-# Vercel用に Flask の app オブジェクトを直接公開する
-# handler関数は不要。Vercelが勝手に app を探してくれる。
+# (マッチングやゲームプレイのロジックは以前のままだが、インポートミスがないように調整済み)
