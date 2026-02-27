@@ -3,7 +3,6 @@ from flask_cors import CORS
 import json, random, uuid
 from .db import redis, get_user, save_user, is_banned, add_to_ban_list
 from .game_logic import get_valid_moves, execute_move
-
 app = Flask(__name__)
 CORS(app)
 
