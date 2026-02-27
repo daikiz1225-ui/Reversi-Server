@@ -11,24 +11,22 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
-# --- [修正の核心] だいきの画面にある名前を直接指定する ---
+# --- [修正：最新の接続形式] ---
 def get_redis_conn():
     if Redis is None:
         return None, "Library not installed"
     
-    # だいきのVercelにある環境変数名を直接取得
     url = os.environ.get("REDIS_URL")
-    
     if not url:
-        return None, "REDIS_URL is missing in Vercel Settings"
+        return None, "REDIS_URL is missing"
     
     try:
-        # URLを直接渡して接続（トークンもURLに含まれている形式に対応）
-        r = Redis.from_url(url)
+        # 修正：from_urlではなく直接urlを指定して作成
+        r = Redis(url=url)
         r.ping()
         return r, "Connected"
     except Exception as e:
-        return None, f"Connection failed: {str(e)}"
+        return None, f"Connect failed: {str(e)}"
 
 redis, status_msg = get_redis_conn()
 
@@ -38,20 +36,19 @@ def register():
         return jsonify({
             "message": "Server is Online!",
             "database": "Connected" if status_msg == "Connected" else "Error",
-            "debug_msg": status_msg,
-            "using_key": "REDIS_URL"
+            "debug_msg": status_msg
         }), 200
         
     if status_msg != "Connected":
-        return jsonify({"error": "Database not ready", "detail": status_msg}), 500
+        return jsonify({"error": "Database not ready"}), 500
 
-    # 登録処理（テスト用）
     data = request.json
     if not data: return jsonify({"error": "No data"}), 400
     
     username = data.get('username', 'test_user')
     try:
-        redis.set(f"test:{username}", "active")
-        return jsonify({"message": "OK", "status": "Data saved to Redis!"})
+        # テスト保存
+        redis.set(f"test:{username}", "success")
+        return jsonify({"message": "OK", "status": "Data saved!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
