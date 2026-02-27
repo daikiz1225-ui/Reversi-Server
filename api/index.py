@@ -1,32 +1,24 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import json, random, uuid
 import os
 from upstash_redis import Redis
 
 app = Flask(__name__)
 CORS(app)
 
-# --- どんな名前で環境変数が作られていても、意地でも見つける設定 ---
-def connect_redis():
-    # 候補1: Vercel標準の KV_
-    # 候補2: だいきの画面で見えた STORAGE_
-    # 候補3: 手動設定によくある REDIS_
-    prefixes = ['KV', 'STORAGE', 'REDIS']
-    
-    for p in prefixes:
-        url = os.environ.get(f"{p}_REST_API_URL") or os.environ.get(f"{p}_URL")
-        token = os.environ.get(f"{p}_REST_API_TOKEN")
-        if url and token:
-            try:
-                r = Redis(url=url, token=token)
-                r.ping()
-                return r, True
-            except:
-                continue
-    return None, False
-
-redis, kv_ready = connect_redis()
+# --- [修正ポイント] REDIS_URL 1本で接続する ---
+try:
+    # だいきの環境にある "REDIS_URL" を使って接続
+    redis = Redis.from_env() 
+    # もし from_env() でダメな時のための予備
+    if not os.environ.get("REDIS_URL"):
+         redis = Redis(url=os.environ.get("STORAGE_URL"), token=os.environ.get("STORAGE_REST_API_TOKEN"))
+         
+    redis.ping()
+    kv_ready = True
+except Exception as e:
+    print(f"Connection Error: {e}")
+    kv_ready = False
 
 ADMIN_PASS = "daiki1225"
 SUSPICIOUS_LIMIT = 5
@@ -34,17 +26,15 @@ SUSPICIOUS_LIMIT = 5
 @app.route('/api/auth/register', methods=['POST', 'GET'])
 def register():
     if request.method == 'GET':
-        status = "Connected" if kv_ready else "Still KV Error"
-        # デバッグ用に、今見えている環境変数の「名前」だけヒントに出す
-        env_keys = [k for k in os.environ.keys() if "URL" in k or "TOKEN" in k]
+        status = "Connected (Upstash)" if kv_ready else "Redis Connection Error"
         return jsonify({
             "message": "Server is Online!",
             "database": status,
-            "detected_keys": env_keys # 何が見えてるか確認用
+            "info": "Connected via REDIS_URL"
         }), 200
         
     if not kv_ready:
-        return jsonify({"error": "Database is not connected"}), 500
+        return jsonify({"error": "Database not ready"}), 500
 
     data = request.json
     username, password = data.get('username'), data.get('password')
