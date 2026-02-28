@@ -1,26 +1,12 @@
 const { Redis } = require('@upstash/redis');
 
-// --- 1. [接続設定] REDIS_URL も UPSTASH_... も両方対応する最強版 ---
-let redisConfig = {};
+// --- 1. [接続設定] だいきの指定通り、REST用の変数のみを使用 ---
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    // だいきの推奨設定
-    redisConfig = {
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    };
-} else if (process.env.REDIS_URL) {
-    // REDIS_URL しかない場合の自動変換
-    const urlStr = process.env.REDIS_URL;
-    redisConfig = {
-        url: urlStr.includes('https') ? urlStr : `https://${urlStr.split('@')[1]}`,
-        token: urlStr.split('@')[0].replace('https://:', '').replace(':', ''),
-    };
-}
-
-const redis = new Redis(redisConfig);
-
-// --- 2. [game_logic.py 移植] オセロロジック ---
+// --- 2. [game_logic.py 移植] オセロ判定ロジック ---
 const gameLogic = {
     getValidMoves(board, color) {
         let moves = [];
@@ -78,17 +64,17 @@ export default async function handler(req, res) {
     const { pathname } = new URL(req.url || "/", `http://${req.headers.host}`);
 
     try {
-        // 接続確認 (GET /api)
+        // 生存確認 (GET /api)
         if (req.method === 'GET' && (pathname === '/api' || pathname === '/api/')) {
             const pong = await redis.ping();
             return res.status(200).json({
                 message: "Server is Online!",
                 database: pong === "PONG" ? "Connected" : "Error",
-                config_used: process.env.UPSTASH_REDIS_REST_URL ? "New Env" : "Legacy REDIS_URL"
+                status: "Ready"
             });
         }
 
-        // ユーザー登録・BANチェック (db.py 移植)
+        // ユーザー登録 (db.py 移植)
         if (pathname.includes('register') && req.method === 'POST') {
             const { username, password } = req.body;
             if (await redis.sismember("ban_list", username)) return res.status(403).json({ error: "BANされています" });
@@ -97,22 +83,12 @@ export default async function handler(req, res) {
             return res.status(200).json({ message: "OK" });
         }
 
-        // 不正通報 (db.py 移植)
-        if (pathname.includes('report') && req.method === 'POST') {
-            const { username } = req.body;
-            const count = await redis.hincrby(`user:${username}`, "suspicious_count", 1);
-            if (count >= 5) {
-                await redis.sadd("ban_list", username);
-                return res.status(200).json({ status: "BANNED" });
-            }
-            return res.status(200).json({ status: "WARNED", count });
-        }
-
-        // ゲーム動作 (game_logic.py 移植)
+        // 駒打ち判定 (game_logic.py 移植)
         if (pathname.includes('move') && req.method === 'POST') {
             const { board, r, c, color } = req.body;
-            if (!gameLogic.canPlace(board, r, c, color)) return res.status(400).json({ error: "置けません" });
-            return res.status(200).json({ board: gameLogic.executeMove(board, r, c, color) });
+            if (!gameLogic.canPlace(board, r, c, color)) return res.status(400).json({ error: "そこには置けません" });
+            const nextBoard = gameLogic.executeMove(board, r, c, color);
+            return res.status(200).json({ board: nextBoard });
         }
 
         return res.status(404).json({ error: "Not Found", path: pathname });
@@ -121,7 +97,11 @@ export default async function handler(req, res) {
         return res.status(500).json({ 
             error: "Redis Connection Error", 
             message: e.message,
-            debug: "Check your Environment Variables in Vercel"
+            debug_info: {
+                url_exists: !!process.env.UPSTASH_REDIS_REST_URL,
+                token_exists: !!process.env.UPSTASH_REDIS_REST_TOKEN,
+                env_keys: Object.keys(process.env).filter(k => k.includes('REDIS'))
+            }
         });
     }
 }
