@@ -1,12 +1,11 @@
 const { Redis } = require('@upstash/redis');
 
-// 1. データベース接続設定
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// 2. オセロの全ロジック (game_logic.py を完全に移植)
+// ゲームロジック（中身は変えてないぜ！）
 const gameLogic = {
     canPlace(board, r, c, color) {
         if (board[r][c] !== 0) return false;
@@ -45,59 +44,46 @@ const gameLogic = {
     }
 };
 
-// 3. メインの通信処理 (CORS対応済み)
+// 【ここが重要】CORS対応を強化したハンドラー
 export default async function handler(req, res) {
-    // 許可証（CORSヘッダー）をセット
+    // どのサイトからのアクセスも許可する設定
+    res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
 
-    // ブラウザの事前確認（OPTIONS）に対応
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    // ブラウザが「送ってもいい？」と聞いてきたら即「OK」と答える
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
 
     const { pathname } = new URL(req.url || "/", `http://${req.headers.host}`);
 
     try {
-        // [GET] 生存確認用
-        if (req.method === 'GET' && (pathname === '/api' || pathname === '/api/')) {
+        // [GET] 接続確認
+        if (req.method === 'GET') {
             const pong = await redis.ping();
             return res.status(200).json({
                 message: "Server Online!",
                 database: pong === "PONG" ? "Connected" : "Error",
-                info: "Game logic and DB sync ready."
+                info: "Final CORS fix applied."
             });
         }
 
-        // [POST] ユーザー登録 (db.py 移植)
-        if (pathname.includes('register') && req.method === 'POST') {
-            const { username, password } = req.body;
-            if (await redis.sismember("ban_list", username)) {
-                return res.status(403).json({ error: "あなたはBANされています" });
-            }
-            if (await redis.exists(`user:${username}`)) {
-                return res.status(400).json({ error: "その名前は既に使われています" });
-            }
-            await redis.hset(`user:${username}`, { password, rate: 1000, suspicious: 0 });
-            return res.status(200).json({ message: "OK" });
-        }
-
-        // [POST] 駒打ち処理
+        // [POST] 駒打ち
         if (pathname.includes('move') && req.method === 'POST') {
             const { board, r, c, color } = req.body;
-            if (!gameLogic.canPlace(board, r, c, color)) {
-                return res.status(400).json({ error: "置けません" });
-            }
+            if (!gameLogic.canPlace(board, r, c, color)) return res.status(400).json({ error: "置けません" });
             const nextBoard = gameLogic.executeMove(board, r, c, color);
             return res.status(200).json({ board: nextBoard });
         }
 
         return res.status(404).json({ error: "Not Found" });
-
     } catch (e) {
-        console.error("Server Error:", e);
-        return res.status(500).json({ 
-            error: "Internal Server Error", 
-            message: e.message 
-        });
+        return res.status(500).json({ error: "Server Error", message: e.message });
     }
 }
